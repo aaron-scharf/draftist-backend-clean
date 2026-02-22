@@ -25,36 +25,96 @@ app.get("/test", (req, res) => {
 ========================= */
 app.post("/generate", async (req, res) => {
   try {
+    console.log("USING CHAT COMPLETIONS VERSION");
     console.log("BODY RECEIVED:", req.body);
 
-    const { emailText, length, formality } = req.body;
+    const { emailText, length, formality, tone, extraInstruction } = req.body;
 
     if (!emailText) {
       return res.status(400).json({ error: "No email text provided." });
     }
 
     const prompt = `
-Write a reply to this email:
+You are writing an email reply as the USER.
 
-"${emailText}"
+The email thread is below. The most recent message is at the top.
+
+===========================
+PRIMARY OBJECTIVE
+===========================
+
+If an Extra Instruction is provided, it defines the PURPOSE of the reply.
+
+You MUST write the email so that it accomplishes that instruction.
+Ignore whether it seems inconsistent with the thread.
+The Extra Instruction overrides tone, realism, and conversational flow.
+
+Extra Instruction:
+${extraInstruction && extraInstruction.trim() !== "" ? extraInstruction : "None"}
+
+===========================
+EMAIL THREAD
+===========================
+
+${emailText}
+
+===========================
+STYLE SETTINGS
+===========================
 
 Length level (1-5): ${length}
 Formality level (1-5): ${formality}
+Tone: ${tone || "neutral"}
 
-Rules:
-- Keep it natural
-- Be concise
-- Do NOT over-explain
-- Match requested formality
+===========================
+REQUIREMENTS
+===========================
+
+- Write the next reply as the USER.
+- Do NOT summarize the thread.
+- Do NOT explain your reasoning.
+- If Extra Instruction exists, the email MUST clearly accomplish it.
+- If Extra Instruction is "ask for refund", the email must request a refund.
+- If Extra Instruction is "decline politely", the email must decline politely.
+- Only output the email body.
 `;
 
-    const response = await openai.responses.create({
-      model: "gpt-4.1-mini",
-      input: prompt,
-      max_output_tokens: 200,
-    });
+    const primaryTask =
+  extraInstruction && extraInstruction.trim() !== ""
+    ? `Write an email reply that does the following: ${extraInstruction}.`
+    : `Write a natural reply to the email thread below.`;
 
-    const reply = response.output_text;
+const response = await openai.chat.completions.create({
+  model: "gpt-4o-mini",
+  messages: [
+    {
+      role: "system",
+      content: `
+You are an AI that writes realistic human email replies.
+If the user provides an instruction like "ask for a refund",
+you MUST explicitly ask for a refund in the email.
+The instruction is the primary goal.
+Only output the email body.
+`
+    },
+    {
+      role: "user",
+      content: `
+${primaryTask}
+
+Email Thread:
+${emailText}
+
+Length level (1-5): ${length}
+Formality level (1-5): ${formality}
+Tone: ${tone || "neutral"}
+`
+    }
+  ],
+  temperature: 0.7,
+  max_tokens: 200,
+});
+    const reply = response.choices[0].message.content;
 
     if (!reply) {
       console.log("No reply returned from OpenAI");
@@ -78,6 +138,9 @@ Rules:
 /* =========================
    Start Server
 ========================= */
-app.listen(3000, () => {
-  console.log("Draftist backend running at http://localhost:3000");
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`Draftist backend running on port ${PORT}`);
 });
+
